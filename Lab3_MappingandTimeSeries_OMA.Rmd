@@ -1,0 +1,154 @@
+---
+title: "Lab3-Map-TimeSeries_OMA"
+author: "Oriel Mwaniki-Alexander"
+date: "2025-04-29"
+output:
+  word_document: default
+  pdf_document: default
+---
+
+```{r}
+#libraries for maps
+library(maps)
+library(ggplot2)
+library(tmap)
+library(mapproj)
+library(magrittr)
+library(gcookbook)
+library(dplyr)
+library(usmap)
+library(readr)
+
+#fully cleaned dataset
+setwd("C:/Users/hanna/Downloads") 
+pubrev <- read.csv("revenue_all_institutions_with_state.csv")
+View(pubrev)
+```
+
+Explore and normalize data by state
+
+```{r}
+#look at first couple observations
+head(pubrev)
+
+#count distinct universities per state
+#doing this to normalize the revenues by state
+univ_counts <- pubrev %>%
+  distinct(State, Institution.Name) %>% 
+  count(State, name = "Num_Universities")  
+
+#view result
+print(univ_counts)
+```
+
+Get new dataframe ready for mapping
+
+```{r}
+#summarize to mean revenue per state
+state_revenue <- pubrev %>%
+  group_by(State) %>%
+  summarize(rev_ag = mean(Revenue, na.rm = TRUE))
+View(state_revenue)
+
+#join the count column with og dataframe
+rev_with_counts <- state_revenue %>%
+  left_join(univ_counts, by = "State")
+
+#avg revenue per number of universities
+rev_with_counts$avg_unirev <-
+  (rev_with_counts$rev_ag) / (sum(rev_with_counts$Num_Universities))
+sum(rev_with_counts$Num_Universities)
+
+#fix the first row by inputting it as alaska
+rev_with_counts$State[1] <- "Alaska"
+View(rev_with_counts)
+
+#make a rev per number of universities
+rev_with_counts$state_university <- (rev_with_counts$rev_ag) / (rev_with_counts$Num_Universities)
+View(rev_with_counts)
+
+#rename "State" variable to "state" to allow mapping with usmap
+rev_with_counts <- rev_with_counts %>%
+  rename(state = State)
+
+#make sure column is renamed
+ls(rev_with_counts)
+```
+
+Start mapping
+
+```{r}
+#plot mean revenue per state
+plot_usmap(data = rev_with_counts, values = "rev_ag", color = "white") +
+  scale_fill_continuous(name = "Average University Revenue per State", 
+                        label = scales::dollar) +
+  theme(legend.position = "right")
+
+#cleaner map
+plot_usmap(data = rev_with_counts, values = "rev_ag", color = "white") +
+  scale_fill_continuous(
+    name = "Average Revenue per State", 
+    label = dollar_format(scale = 1e-8 , suffix = "B", prefix = "$"),
+    breaks = pretty(rev_with_counts$rev_ag, n = 4.5),
+    low = "purple3", high = "pink"  
+  ) +
+  theme_minimal() +
+  theme(
+    legend.position = "right",
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+    legend.title = element_text(size = 12),
+    legend.text = element_text(size = 10)
+  ) +
+  labs(
+    title = "Average University Revenue per State From 2002 to 2022",
+    fill = "Revenue"
+  )
+
+```
+
+Now do a time series
+
+```{r}
+#perhaps a time series visualization(?)
+library(dplyr)
+library(ggplot2)
+library(scales)
+
+# aggregate revenue by year
+total_rev <- pubrev %>%
+  group_by(Year) %>%
+  summarize(TotalRevenue = sum(Revenue))
+
+total_rev$avg_annual <- total_rev$TotalRevenue/sum(rev_with_counts$Num_Universities)
+
+View(total_rev)
+
+#plotting average annual revenues for public universities from 2002 to 2022
+ggplot(total_rev, aes(x = Year, y = TotalRevenue)) +
+  geom_line(color = "sienna3", size = 1.5) +
+  geom_point(color = "cornflowerblue") +
+  scale_y_continuous(labels = dollar_format()) +
+  labs(
+    title = "Total University Revenue (2002–2022)",
+    x = "Year",
+    y = "Average Revenues ($)"
+  ) +
+  theme_minimal()
+
+#interactive time viz using dygraph
+#correct date format
+rev <- xts(total_rev$TotalRevenue, order.by = as.Date(paste0(total_rev$Year, "-01-01")))
+
+average_revenue <- dygraph(rev, ylab = "Average Public University Revenues", xlab = "Year (Toggle to zoom in)") %>%
+  dyOptions(labelsUTC = TRUE, fillGraph=TRUE, fillAlpha=0.1, drawGrid = FALSE,colors = "forestgreen") %>%
+  dyRangeSelector() %>%
+  dyCrosshair(direction = "vertical") %>%
+  dyHighlight(highlightCircleSize = 5, highlightSeriesBackgroundAlpha = 0.2, hideOnMouseOut = FALSE)  %>%
+  dyRoller(rollPeriod = 1) %>%
+  dyAxis("y", label = "Average Revenue per University (in Millions)", 
+         valueFormatter = "function(x) {return  (x / 1e6).toFixed(0);}",
+         axisLabelFormatter = "function(x) {return  (x / 1e6).toFixed(0);}"
+  )
+
+average_revenue
+```
